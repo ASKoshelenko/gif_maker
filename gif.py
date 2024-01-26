@@ -5,6 +5,7 @@ import os
 import re
 import logging
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,15 +19,19 @@ def create_gif_from_stream(stream_url, output_folder):
             return
 
         frames = []
+        start_time = time.time()
 
-        for _ in range(60):
+        while len(frames) < 60:  # захват 60 кадров
             ret, frame = cap.read()
             if not ret:
                 logging.warning("Не удалось получить кадр")
                 break
             frames.append(frame)
-            time.sleep(1)
+            time.sleep(max(0, start_time + len(frames) - time.time()))  # корректировка задержки
         cap.release()
+
+        # Ресайзинг кадров до 50% от оригинального размера
+        resized_frames = [cv2.resize(frame, (frame.shape[1] // 2, frame.shape[0] // 2)) for frame in frames]
 
         # Создание уникального имени файла с меткой времени
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -34,7 +39,7 @@ def create_gif_from_stream(stream_url, output_folder):
         gif_filename = os.path.join(output_folder, f"{filename_safe_url}_{timestamp}.gif")
 
         with imageio.get_writer(gif_filename, mode='I', duration=1) as writer:
-            for frame in frames:
+            for frame in resized_frames:
                 writer.append_data(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         logging.info(f"GIF создан: {gif_filename}")
 
@@ -46,7 +51,6 @@ if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
 streams = [
-    # Пример записи адресов для тестирования
     # "rtsp://62.140.234.41",
     # "rtsp://185.141.76.91",
     # "rtsp://37.230.136.75",
@@ -63,5 +67,8 @@ streams = [
     # Добавьте другие потоки здесь
 ]
 
-for stream_url in streams:
-    create_gif_from_stream(stream_url, output_folder)
+# Использование многопоточности для обработки потоков
+with ThreadPoolExecutor(max_workers=5) as executor:
+    futures = [executor.submit(create_gif_from_stream, stream_url, output_folder) for stream_url in streams]
+    for future in futures:
+        future.result()
